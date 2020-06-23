@@ -1,6 +1,7 @@
 from model import load_model, TEDD1104
-from keyboard.inputsHandler import select_key
-from keyboard.getkeys import key_check, key_press
+import keyboard
+from inputsHandler import select_key
+from getkeys import key_check, key_press
 import argparse
 import threading
 import screen.record_screen as screen_recorder

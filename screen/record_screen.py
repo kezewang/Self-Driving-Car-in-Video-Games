@@ -2,7 +2,7 @@ from screen.grabber import Grabber
 import numpy as np
 import time
 import cv2
-from keyboard.getkeys import key_check
+from getkeys import key_check
 import threading
 import logging
 import math
@@ -181,9 +181,23 @@ def initialize_global_variables() -> None:
     global key_out
 
     fps = 10
-    grb = Grabber(bbox=(1, 26, 1601, 926))
-    front_buffer = np.zeros((1600, 900), dtype=np.int8)
-    back_buffer = np.zeros((1600, 900), dtype=np.int8)
+
+    width = 1920 - 1
+    height = 1080
+    gameWidth = 1280
+    gameHeight = 720
+    xOffset = 0
+    yOffset = 0
+    
+    gameStartX = ((width//2) - (gameWidth//2)) + xOffset
+    gameStartY = ((height//2) - (gameHeight//2)) + yOffset
+    gameEndX = ((width//2) + (gameWidth//2)) + xOffset
+    gameEndY = ((height//2) + (gameHeight//2)) + yOffset
+    SCREEN_REGION = (gameStartX, gameStartY, gameEndX, gameEndY)
+
+    grb = Grabber(bbox=SCREEN_REGION)
+    front_buffer = np.zeros((1280, 720), dtype=np.int8)
+    back_buffer = np.zeros((1280, 720), dtype=np.int8)
     num = 0
     seq = np.asarray(
         [

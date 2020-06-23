@@ -1,0 +1,1 @@
+python run_TEDD1104.py --model_dir .\small0.2 --show_current_control --fp16
