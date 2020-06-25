@@ -1,0 +1,1 @@
+python generate_data.py --save_dir vcla1007\raw_data
