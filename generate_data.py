@@ -5,7 +5,19 @@ import numpy as np
 import argparse
 import threading
 import screen.record_screen as screen_recorder
-from keyboard.getkeys import key_check
+from getkeys import key_check
+import cv2
+import zipfile
+import io
+
+def saveCompressed(fh, **namedict):
+     with zipfile.ZipFile(fh, mode="w", compression=zipfile.ZIP_DEFLATED,
+                          allowZip64=True) as zf:
+         for k, v in namedict.items():
+             with zf.open(k, 'w', force_zip64=True) as buf:
+                 np.lib.npyio.format.write_array(buf,
+                                                 np.asanyarray(v),
+                                                 allow_pickle=False)
 
 
 def save_data(dir_path: str, data: np.ndarray, number: int):
@@ -19,7 +31,8 @@ def save_data(dir_path: str, data: np.ndarray, number: int):
 
     """
     file_name = os.path.join(dir_path, f"training_data{number}.npz")
-    np.savez_compressed(file_name, data)
+    np.savez(file_name, data)
+    # saveCompressed(file_name, data=data)
     del data
 
 
@@ -151,7 +164,8 @@ def generate_dataset(
         )
 
         key = counter_keys(output)
-
+        # cv2.imshow("haha", img_seq[0])
+        # cv2.waitKey(2)
         if key != -1:
             if use_probability:
                 total = np.sum(number_of_keys)
