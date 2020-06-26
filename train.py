@@ -125,6 +125,8 @@ def train(
                 )
 
                 outputs = model.forward(X_bacth)
+                #print(outputs.size())
+                #print(y_batch.size())
                 loss = criterion(outputs, y_batch) / accumulation_steps
                 running_loss += loss.item()
 

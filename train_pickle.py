@@ -11,6 +11,7 @@ import math
 from torch.utils.tensorboard import SummaryWriter
 # from DataLoader import DataLoaderTEDD
 from torch.utils.data import Dataset, DataLoader
+import pickle
 
 if torch.cuda.is_available():
     device: torch.device = torch.device("cuda:0")
@@ -25,8 +26,45 @@ def processOneItem(itemPath):
     datas = pickle.load(open(itemPath, 'rb'))
     imgData = datas[0:5]
     labelData = datas[5]
+    label = np.zeros((1,), dtype=np.int16)
+    if np.array_equal(labelData, [0, 0, 0, 0]):
+        label[0] = 0
+    elif np.array_equal(labelData, [1, 0, 0, 0]):
+        label[0] = 1
+    elif np.array_equal(labelData, [0, 1, 0, 0]):
+        label[0] = 2
+    elif np.array_equal(labelData, [0, 0, 1, 0]):
+        label[0] = 3
+    elif np.array_equal(labelData, [0, 0, 0, 1]):
+        label[0] = 4
+    elif np.array_equal(labelData, [1, 0, 1, 0]):
+        label[0] = 5
+    elif np.array_equal(labelData, [1, 0, 0, 1]):
+        label[0] = 6
+    elif np.array_equal(labelData, [0, 1, 1, 0]):
+        label[0] = 7
+    elif np.array_equal(labelData, [0, 1, 0, 1]):
+        label[0] = 8
 
-    return imgData, labelData
+    imgData_tensor = imgData[0]    
+    imgData_tensor = np.expand_dims(imgData_tensor, axis=0) 
+    for img_i in imgData[1:]:
+        img_i = np.expand_dims(img_i, axis=0)
+        imgData_tensor = np.concatenate((imgData_tensor, img_i), axis=0)
+ 
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float16)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float16)
+
+    swappedImg = np.empty( (imgData_tensor.shape[0], imgData_tensor.shape[3], imgData_tensor.shape[1], imgData_tensor.shape[2]), dtype=np.float16)
+    for i in range(imgData_tensor.shape[0]):
+        img = imgData_tensor[i, :, :, :]
+        swappedImg[i, :, :, :] = np.rollaxis((img / np.float16(255.0)) - mean / std, 2, 0)        
+    #print(swappedImg.shape)
+    swappedImg = np.reshape(swappedImg, (swappedImg.shape[0]*swappedImg.shape[1], swappedImg.shape[2], swappedImg.shape[3]))
+    #print(swappedImg.shape)
+
+#    print(label.shape)
+    return swappedImg, label
 
 class PickleDataset(Dataset):
     def __init__(self, train_dir):
@@ -116,7 +154,7 @@ def train(
     model.zero_grad()
 
 
-    pickle_data_loader = DataLoader(dataset=PickleDataset(train_dir), batch_size=32, shuffle=True, num_workers=4)
+    trainLoader = DataLoader(dataset=PickleDataset(train_dir), batch_size=batch_size, shuffle=True, num_workers=12)
 
     printTrace("Training...")
     for epoch in range(num_epoch):
@@ -130,12 +168,16 @@ def train(
         acc_dev: float = 0.0
 
         for num_batchs, inputs in enumerate(trainLoader):
-            X_bacth, y_batch = (
-                torch.from_numpy(inputs[0]).to(device),
-                torch.from_numpy(inputs[1]).long().to(device),
-            )
+            X_bacth = torch.reshape(inputs[0], (inputs[0].shape[0] * 5, 3, inputs[0].shape[2], inputs[0].shape[3])).to(device)
+            y_batch = torch.reshape(inputs[1], (inputs[0].shape[0],)).long().to(device)
+            #X_bacth, y_batch = (
+            #    torch.from_numpy(batch_data).to(device),
+            #    torch.from_numpy(inputs[1]).long().to(device),
+            #)
 
             outputs = model.forward(X_bacth)
+            #print(outputs.size())
+            #print(y_batch.size())
             loss = criterion(outputs, y_batch) / accumulation_steps
             running_loss += loss.item()
 
@@ -158,9 +200,10 @@ def train(
                 f"Loss: {-1 if num_batchs == 0 else running_loss / num_batchs}. "
                 f"Learning rate {optimizer.state_dict()['param_groups'][0]['lr']}"
             )
+            num_batchs += 1
             writer.add_scalar("Loss/train", running_loss / num_batchs, iteration_no)
 
-            scheduler.step(running_loss / num_batchs)
+            #scheduler.step(running_loss / num_batchs)
 
         if (iteration_no + 1) % eval_every == 0:
             start_time_eval: float = time.time()
@@ -229,7 +272,7 @@ def train_new_model(
     accumulation_steps: int = 1,
     num_epoch=20,
     optimizer_name="SGD",
-    learning_rate: float = 0.01,
+    learning_rate: float = 0.001,
     scheduler_patience: int = 100,
     resnet: int = 18,
     pretrained_resnet: bool = True,
@@ -579,7 +622,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--optimizer_name",
         type=str,
-        default="SGD",
+        default="Adam",
         choices=["SGD", "Adam"],
         help="[new_model] Optimizer to use for training a new model: SGD or Adam",
     )
