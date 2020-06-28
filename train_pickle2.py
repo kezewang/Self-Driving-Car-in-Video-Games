@@ -9,7 +9,12 @@ import argparse
 import random
 import math
 from torch.utils.tensorboard import SummaryWriter
-from DataLoader import DataLoaderTEDD
+# from DataLoader import DataLoaderTEDD
+from torch.utils.data import Dataset, DataLoader
+import pickle
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 if torch.cuda.is_available():
     device: torch.device = torch.device("cuda:0")
@@ -18,6 +23,63 @@ else:
     logging.warning(
         "GPU not found, using CPU, training will be very slow. CPU NOT COMPATIBLE WITH FP16"
     )
+
+
+def processOneItem(itemPath):
+    datas = pickle.load(open(itemPath, 'rb'))
+    imgData = datas[0:5]
+    labelData = datas[5]
+    label = np.zeros((1,), dtype=np.int16)
+    if np.array_equal(labelData, [0, 0, 0, 0]):
+        label[0] = 0
+    elif np.array_equal(labelData, [1, 0, 0, 0]):
+        label[0] = 1
+    elif np.array_equal(labelData, [0, 1, 0, 0]):
+        label[0] = 2
+    elif np.array_equal(labelData, [0, 0, 1, 0]):
+        label[0] = 3
+    elif np.array_equal(labelData, [0, 0, 0, 1]):
+        label[0] = 4
+    elif np.array_equal(labelData, [1, 0, 1, 0]):
+        label[0] = 5
+    elif np.array_equal(labelData, [1, 0, 0, 1]):
+        label[0] = 6
+    elif np.array_equal(labelData, [0, 1, 1, 0]):
+        label[0] = 7
+    elif np.array_equal(labelData, [0, 1, 0, 1]):
+        label[0] = 8
+
+    imgData_tensor = imgData[0]    
+    imgData_tensor = np.expand_dims(imgData_tensor, axis=0) 
+    for img_i in imgData[1:]:
+        img_i = np.expand_dims(img_i, axis=0)
+        imgData_tensor = np.concatenate((imgData_tensor, img_i), axis=0)
+ 
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float16)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float16)
+
+    swappedImg = np.empty( (imgData_tensor.shape[0], imgData_tensor.shape[3], imgData_tensor.shape[1], imgData_tensor.shape[2]), dtype=np.float16)
+    for i in range(imgData_tensor.shape[0]):
+        img = np.array( imgData_tensor[i, :, :, :], dtype=np.float16 )
+        swappedImg[i, :, :, :] = np.rollaxis((img / np.float16(255.0)) - mean / std, 2, 0)        
+    #print(swappedImg.shape)
+    swappedImg = np.reshape(swappedImg, (swappedImg.shape[0]*swappedImg.shape[1], swappedImg.shape[2], swappedImg.shape[3]))
+    #print(swappedImg.shape)
+
+#    print(label.shape)
+    return swappedImg, label
+
+class PickleDataset(Dataset):
+    def __init__(self, train_dir):
+        self.dataFolder = train_dir
+        self.dataFileList = os.listdir(self.dataFolder)
+        print('Predicting Sample Number: ', len(self.dataFileList))
+
+    def __len__(self):
+        return len(self.dataFileList)
+
+    def __getitem__(self, idx):
+        return processOneItem(os.path.join(self.dataFolder, self.dataFileList[idx]))
 
 
 def train(
@@ -94,151 +156,115 @@ def train(
     total_training_exampels: int = 0
     model.zero_grad()
 
+
+    trainLoader = DataLoader(dataset=PickleDataset(train_dir), batch_size=batch_size, shuffle=
+False, num_workers=8)
+
     printTrace("Training...")
+    iteration_no: int = 0
     for epoch in range(num_epoch):
-        step_no: int = 0
-        iteration_no: int = 0
-        num_used_files: int = 0
-        data_loader = DataLoaderTEDD(
-            dataset_dir=train_dir,
-            nfiles2load=num_load_files_training,
-            hide_map_prob=hide_map_prob,
-            dropout_images_prob=dropout_images_prob,
-            fp=16 if fp16 else 32,
+        #step_no: int = 0
+        #num_used_files: int = 0
+
+        print('EpochNum: ' + str(epoch))
+        model.train()
+        start_time: float = time.time()
+        running_loss: float = 0.0
+        acc_dev: float = 0.0
+
+        for num_batchs, inputs in enumerate(trainLoader):
+            X_bacth = torch.reshape(inputs[0], (inputs[0].shape[0] * 5, 3, inputs[0].shape[2], inputs[0].shape[3])).to(device)
+            y_batch = torch.reshape(inputs[1], (inputs[0].shape[0],)).long().to(device)
+            #print(X_bacth)
+            #X_bacth, y_batch = (
+            #    torch.from_numpy(batch_data).to(device),
+            #    torch.from_numpy(inputs[1]).long().to(device),
+            #)
+
+            outputs = model.forward(X_bacth)
+            #print(outputs.size())
+            #print(y_batch)
+            loss = criterion(outputs, y_batch) / accumulation_steps
+            running_loss += loss.item()
+
+            if fp16:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
+
+            if fp16:
+                torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), 1.0)
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+            optimizer.step()
+            model.zero_grad()
+
+        #scheduler.step(running_loss)
+
+        # Print Statistics
+        printTrace(
+            f"Loss: {running_loss/num_batchs}. "
+            f"Learning rate {optimizer.state_dict()['param_groups'][0]['lr']}"
         )
 
-        data = data_loader.get_next()
-        # Get files in batches, all files will be loaded and data will be shuffled
-        while data:
-            X, y = data
-            model.train()
-            start_time: float = time.time()
-            total_training_exampels += len(y)
-            running_loss: float = 0.0
-            num_batchs: int = 0
-            acc_dev: float = 0.0
+        writer.add_scalar("Loss/train", running_loss, iteration_no)
 
-            for X_bacth, y_batch in nn_batchs(X, y, batch_size):
-                X_bacth, y_batch = (
-                    torch.from_numpy(X_bacth).to(device),
-                    torch.from_numpy(y_batch).long().to(device),
-                )
+        if (iteration_no + 1) % eval_every == 0:
+            start_time_eval: float = time.time()
 
-                #print(X_bacth)
-                outputs = model.forward(X_bacth)
-                #print(outputs.size())
-                #print(y_batch)
-                loss = criterion(outputs, y_batch) / accumulation_steps
-                running_loss += loss.item()
-
-                if fp16:
-                    with amp.scale_loss(loss, optimizer) as scaled_loss:
-                        scaled_loss.backward()
-                else:
-                    loss.backward()
-
-                if fp16:
-                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), 1.0)
-                else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-                if (step_no + 1) % accumulation_steps or (
-                    num_used_files + 1 > len(data_loader) - num_load_files_training
-                    and num_batchs == math.ceil(len(y) / batch_size) - 1
-                ):  # If we are in the last bach of the epoch we also want to perform gradient descent
-                    optimizer.step()
-                    model.zero_grad()
-
-                num_batchs += 1
-                step_no += 1
-
-            num_used_files += num_load_files_training
-
-            # Print Statistics
-            printTrace(
-                f"EPOCH: {initial_epoch+epoch}. Iteration {iteration_no}. "
-                f"{num_used_files} of {len(data_loader)} files. "
-                f"Total examples used for training {total_training_exampels}. "
-                f"Iteration time: {round(time.time() - start_time,2)} secs."
+            acc_dev: float = evaluate(
+                model=model,
+                X=X_dev,
+                golds=y_dev,
+                device=device,
+                batch_size=batch_size,
             )
-            printTrace(
-                f"Loss: {-1 if num_batchs == 0 else running_loss / num_batchs}. "
-                f"Learning rate {optimizer.state_dict()['param_groups'][0]['lr']}"
+
+            acc_test: float = evaluate(
+                model=model,
+                X=X_test,
+                golds=y_test,
+                device=device,
+                batch_size=batch_size,
             )
-            writer.add_scalar("Loss/train", running_loss / num_batchs, iteration_no)
 
-            scheduler.step(running_loss / num_batchs)
+            printTrace(
+                f"Acc dev set: {round(acc_dev,2)}. "
+                f"Acc test set: {round(acc_test,2)}.  "
+                f"Eval time: {round(time.time() - start_time_eval,2)} secs."
+            )
 
-            if (iteration_no + 1) % eval_every == 0:
-                start_time_eval: float = time.time()
-                if len(X) > 0 and len(y) > 0:
-                    acc_train: float = evaluate(
-                        model=model,
-                        X=torch.from_numpy(X),
-                        golds=y,
-                        device=device,
-                        batch_size=batch_size,
-                    )
-                else:
-                    acc_train = -1.0
-
-                acc_dev: float = evaluate(
-                    model=model,
-                    X=X_dev,
-                    golds=y_dev,
-                    device=device,
-                    batch_size=batch_size,
-                )
-
-                acc_test: float = evaluate(
-                    model=model,
-                    X=X_test,
-                    golds=y_test,
-                    device=device,
-                    batch_size=batch_size,
-                )
-
+            if 0.0 < acc_dev > max_acc and save_best:
+                max_acc = acc_dev
                 printTrace(
-                    f"Acc training set: {round(acc_train,2)}. "
-                    f"Acc dev set: {round(acc_dev,2)}. "
-                    f"Acc test set: {round(acc_test,2)}.  "
-                    f"Eval time: {round(time.time() - start_time_eval,2)} secs."
+                    f"New max acc in dev set {round(max_acc,2)}. Saving model..."
                 )
-
-                if 0.0 < acc_dev > max_acc and save_best:
-                    max_acc = acc_dev
-                    printTrace(
-                        f"New max acc in dev set {round(max_acc,2)}. Saving model..."
-                    )
-                    save_model(
-                        model=model,
-                        save_dir=output_dir,
-                        fp16=fp16,
-                        amp_opt_level=amp_opt_level,
-                    )
-                if acc_train > -1:
-                    writer.add_scalar("Accuracy/train", acc_train, iteration_no)
-                writer.add_scalar("Accuracy/dev", acc_dev, iteration_no)
-                writer.add_scalar("Accuracy/test", acc_test, iteration_no)
-
-            if save_checkpoints and (iteration_no + 1) % save_every == 0:
-                printTrace("Saving checkpoint...")
-                save_checkpoint(
-                    path=os.path.join(output_dir, "checkpoint.pt"),
+                save_model(
                     model=model,
-                    optimizer_name=optimizer_name,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    acc_dev=acc_dev,
-                    epoch=initial_epoch + epoch,
+                    save_dir=output_dir,
                     fp16=fp16,
-                    opt_level=amp_opt_level,
+                    amp_opt_level=amp_opt_level,
                 )
+            writer.add_scalar("Accuracy/dev", acc_dev, iteration_no)
+            writer.add_scalar("Accuracy/test", acc_test, iteration_no)
 
-            iteration_no += 1
-            data = data_loader.get_next()
+        if save_checkpoints and (iteration_no + 1) % save_every == 0:
+            printTrace("Saving checkpoint...")
+            save_checkpoint(
+                path=os.path.join(output_dir, "checkpoint.pt"),
+                model=model,
+                optimizer_name=optimizer_name,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                acc_dev=acc_dev,
+                epoch=initial_epoch + epoch,
+                fp16=fp16,
+                opt_level=amp_opt_level,
+            )
 
-        data_loader.close()
+        iteration_no += 1
 
     return max_acc
 
@@ -602,7 +628,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--optimizer_name",
         type=str,
-        default="Adam",
+        default="SGD",
         choices=["SGD", "Adam"],
         help="[new_model] Optimizer to use for training a new model: SGD or Adam",
     )

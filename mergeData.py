@@ -2,7 +2,7 @@ import numpy as np
 import os
 import pickle
 
-folder_path = 'vcla1007/training_data/train_harddisk'
+folder_path = 'vcla1007/training_data/train_hdd'
 filelist = os.listdir(folder_path)
 data = None
 for filename in filelist:
@@ -13,7 +13,7 @@ for filename in filelist:
        data_t = np.load(path, allow_pickle=True)["arr_0"]
        data = np.concatenate((data, data_t), axis=0)
 
-dst_folder_path = 'vcla1007/training_data/train/'
+dst_folder_path = 'vcla1007/training_data/train_ssd/'
 print(data.shape)
 
 for i in range(data.shape[0]):

@@ -59,7 +59,7 @@ def dataLoaderThread(
                 hide_map_prob=hide_map_prob,
                 dropout_images_prob=dropout_images_prob,
                 fp=fp,
-                force_cpu=True,
+                force_cpu=False,
             )
 
             next_file += 1

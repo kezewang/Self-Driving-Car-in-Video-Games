@@ -57,11 +57,10 @@ def processOneItem(itemPath):
 
     swappedImg = np.empty( (imgData_tensor.shape[0], imgData_tensor.shape[3], imgData_tensor.shape[1], imgData_tensor.shape[2]), dtype=np.float16)
     for i in range(imgData_tensor.shape[0]):
-        img = imgData_tensor[i, :, :, :]
+        img = np.array(imgData_tensor[i, :, :, :], dtype=np.float16)
         swappedImg[i, :, :, :] = np.rollaxis((img / np.float16(255.0)) - mean / std, 2, 0)        
     #print(swappedImg.shape)
     swappedImg = np.reshape(swappedImg, (swappedImg.shape[0]*swappedImg.shape[1], swappedImg.shape[2], swappedImg.shape[3]))
-    #print(swappedImg.shape)
 
 #    print(label.shape)
     return swappedImg, label
@@ -154,13 +153,13 @@ def train(
     model.zero_grad()
 
 
-    trainLoader = DataLoader(dataset=PickleDataset(train_dir), batch_size=batch_size, shuffle=True, num_workers=12)
+    trainLoader = DataLoader(dataset=PickleDataset(train_dir), batch_size=batch_size, shuffle=True, num_workers=8)
 
     printTrace("Training...")
+    iteration_no: int = 0
     for epoch in range(num_epoch):
-        step_no: int = 0
-        iteration_no: int = 0
-        num_used_files: int = 0
+        #step_no: int = 0
+        #num_used_files: int = 0
 
         model.train()
         start_time: float = time.time()
@@ -192,18 +191,18 @@ def train(
             else:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-                optimizer.step()
-                model.zero_grad()
+            optimizer.step()
+            model.zero_grad()
 
-            # Print Statistics
-            printTrace(
-                f"Loss: {-1 if num_batchs == 0 else running_loss / num_batchs}. "
-                f"Learning rate {optimizer.state_dict()['param_groups'][0]['lr']}"
-            )
-            num_batchs += 1
-            writer.add_scalar("Loss/train", running_loss / num_batchs, iteration_no)
+        scheduler.step(running_loss)
 
-            #scheduler.step(running_loss / num_batchs)
+        # Print Statistics
+        printTrace(
+            f"Loss: {running_loss}. "
+            f"Learning rate {optimizer.state_dict()['param_groups'][0]['lr']}"
+        )
+
+        writer.add_scalar("Loss/train", running_loss, iteration_no)
 
         if (iteration_no + 1) % eval_every == 0:
             start_time_eval: float = time.time()
@@ -272,7 +271,7 @@ def train_new_model(
     accumulation_steps: int = 1,
     num_epoch=20,
     optimizer_name="SGD",
-    learning_rate: float = 0.001,
+    learning_rate: float = 0.01,
     scheduler_patience: int = 100,
     resnet: int = 18,
     pretrained_resnet: bool = True,
@@ -622,7 +621,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--optimizer_name",
         type=str,
-        default="Adam",
+        default="SGD",
         choices=["SGD", "Adam"],
         help="[new_model] Optimizer to use for training a new model: SGD or Adam",
     )

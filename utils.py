@@ -10,18 +10,17 @@ import os
 import random
 
 
+import cupy as cp
+cupy = True
 try:
     import cupy as cp
-
-    cupy = True
 except ModuleNotFoundError:
-    cupy = False
+#    cupy = False
     logging.warning(
         "Cupy not found, dataset preprocessing is going to be slow. "
         "Installing copy is highly recommended (x10 speedup): "
         "https://docs-cupy.chainer.org/en/latest/install.html?highlight=cuda90#install-cupy"
     )
-
 
 def check_valid_y(data: np.ndarray) -> bool:
     """
@@ -203,6 +202,7 @@ def reshape_x(
     ), f"Hide map prob must be between 0.0 and 1.0. Hide map prob: {hide_map_prob}"
     if cupy and not force_cpu:
         if fp == 16:
+            #print('loading data')
             return reshape_x_cupy(
                 data,
                 dtype=cp.float16,
